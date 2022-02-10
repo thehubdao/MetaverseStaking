@@ -66,7 +66,7 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
         rewardPerTokenAndSecond = _rewardPerTokenAndSecond;
     }
 
-    function deposit(uint104 amount) public payable override {
+    function deposit(uint104 amount) public override {
         require(amount != 0, "amount != 0");
         IERC20(currency).safeTransferFrom(msg.sender, address(this), amount);
 
@@ -81,7 +81,7 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
         emit Deposit(mintedId, msg.sender, amount);
     }
 
-    function increasePosition(uint256 tokenId, uint104 amount) public payable override {
+    function increasePosition(uint256 tokenId, uint104 amount) public override {
         _updateStakingRewardsAndCheckOwner(tokenId);
         IERC20(currency).safeTransferFrom(msg.sender, address(this), amount);
 
@@ -94,14 +94,22 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
     function withdraw(uint256 tokenId, uint104 amount) public override {
         require(amount != 0, "amount != 0");
         require(isWithdrawPhase(), "not withdraw time");
-/*         require(block.timestamp - nftStats[tokenId].lastWithdrawTime > , "already withdrew this epoche"); */
-/*         _nftStats[tokenId].hasWithdrawnInEpoche[_epocheCounter] = true; */
-        _updateStakingRewardsAndCheckOwner(tokenId);
-        uint256 epocheNumber = getEpocheNumber();
 
+        NftStats storage stats = _nftStats[tokenId];
+
+        // if not enough funds are available, check that user only withdraws their part
+        uint256 epocheNumber = getEpocheNumber();
+        if(withdrawPercentage[epocheNumber] != BASIS_POINTS) {
+            require(amount <= stats.amount * withdrawPercentage[epocheNumber] / BASIS_POINTS);
+        }
+        // check that it is the first withdraw for tokenId in this epoche
+        require(!stats.hasWithdrawnInEpoche[epocheNumber], "only one withdraw per epoche");
+        stats.hasWithdrawnInEpoche[epocheNumber] = true;
+
+        _updateStakingRewardsAndCheckOwner(tokenId);
 
         totalAmountStaked -= amount;
-        _nftStats[tokenId].amount -= amount;
+        stats.amount -= amount;
         IERC20(currency).safeTransfer(msg.sender, amount);
 
         emit Withdrawn(tokenId, msg.sender, amount);
@@ -111,6 +119,7 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
         _updateStakingRewards(tokenId);
         address tokenOwner = ownerOf(tokenId);
         uint256 rewardsDue = _nftStats[tokenId].rewardsDue;
+        // careful, this only works as long as 1 unit of the token is practically worthless:
         // setting to 1 to save gas, value donated is practically 0 and cannot be exploited because of gas costs
         _nftStats[tokenId].rewardsDue = 1;
         IERC20(MGH_TOKEN).safeTransfer(tokenOwner, rewardsDue);
@@ -230,15 +239,6 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
         return IERC20(currency).balanceOf(address(this)) * BASIS_POINTS / totalAmountStaked;
     }
 
-/*     function _calculateRebaseFactor() internal view returns(uint256) {
-        uint256 contractBalance = IERC20(currency).balanceOf(address(this));
-        uint256 _totalAmountStaked = totalAmountStaked;
-        if(_totalAmountStaked <= contractBalance) {
-            return 10000;
-        }
-        return contractBalance * 10000 / _totalAmountStaked;
-    } */
-
     ////////////////      Views    ///////////////////
 
     function isWithdrawPhase() public view override returns(bool) {
@@ -264,7 +264,7 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
     }
 
     function getWithdrawableAmount(uint256 tokenId) external view returns(uint256) {
-        if(!_nftStats[tokenId].firstWithdrawInEpoche[getEpocheNumber()]){
+        if(!_nftStats[tokenId].hasWithdrawnInEpoche[getEpocheNumber()]) {
            return withdrawPercentage[getEpocheNumber()] * _nftStats[tokenId].amount / BASIS_POINTS; 
         } 
         return 0;

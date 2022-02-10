@@ -11,13 +11,13 @@ interface IMetaverseStaking is IERC721Upgradeable {
         uint104 amount;
         uint48 lastUpdateTime;
         uint104 rewardsDue;
-        mapping(uint256 => bool) firstWithdrawInEpoche;
+        mapping(uint256 => bool) hasWithdrawnInEpoche;
     }
 
 
     //// User ////
-    function deposit(uint104 amount) external payable;
-    function increasePosition(uint256 tokenId, uint104 amount) external payable;
+    function deposit(uint104 amount) external;
+    function increasePosition(uint256 tokenId, uint104 amount) external;
     function withdraw(uint256 tokenId, uint104 amount) external;
     function getRewards(uint256 tokenId) external;
 
