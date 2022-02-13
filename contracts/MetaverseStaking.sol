@@ -10,7 +10,7 @@ import "./ERC721Upgradeable.sol";
 /* import "@openzeppelin/contracts-upgradeable/token/ERC721/ERC721Upgradeable.sol"; */
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "./IMetaverseStaking.sol";
+import "./Interfaces/IMetaverseStakingFrontend.sol";
 
 
 contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseStaking {
