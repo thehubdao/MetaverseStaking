@@ -15,21 +15,19 @@ import "./IMetaverseStaking.sol";
 
 contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseStaking {
     using SafeERC20 for IERC20;
-    
+
     uint256 constant private BASIS_POINTS = 1e4;
+    uint256 private _withdrawPeriod;
 
     address public MGH_TOKEN;
     address public currency;
-    uint256 public totalAmountStaked;
-    uint256 public withdrawPeriod;
-    uint256 public rewardPerTokenAndSecond;
-    uint256 public pendingRewardRate;
+    uint256 private _totalAmountStaked;
+    uint256 private _rewardPerTokenAndSecond;
+    uint256 private _pendingRewardRate;
 
     //counter for ordered minting
-    uint256 internal _idCounter;
-    uint256 internal _epocheCounter;
-
-    int256 totalBotBalance;
+    uint256 private _idCounter;
+    uint256 private _epocheCounter;
 
     mapping(uint256 => uint256) withdrawPercentage;
 
@@ -43,15 +41,19 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
 
     mapping(uint256 => NftStats) private _nftStats;
 
+    int256 totalBotBalance;
     mapping(address => bool) private _isBot;
+    mapping(address => bool) private _isRegisteredBot;
+
+    constructor() initializer {}
 
     function initialize(
         address mghToken,
         address _currency,
         uint256 _firstEpocheStart,
         uint256 _firstEpocheLength,
-        uint256 _withdrawPeriod,
-        uint256 _rewardPerTokenAndSecond,
+        uint256 __withdrawPeriod,
+        uint256 __rewardPerTokenAndSecond,
         string calldata name,
         string calldata symbol,
         string calldata baseUri
@@ -60,62 +62,56 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
         __ERC721_init(name, symbol, baseUri);
         MGH_TOKEN = mghToken;
         currency = _currency;
-        if(_firstEpocheStart == 0) _firstEpocheStart = block.timestamp + _withdrawPeriod;
+        if(_firstEpocheStart == 0) _firstEpocheStart = block.timestamp + __withdrawPeriod;
         currentEpoche = Epoche(_firstEpocheStart, _firstEpocheStart + _firstEpocheLength, block.timestamp);
-        withdrawPeriod = _withdrawPeriod;
-        rewardPerTokenAndSecond = _rewardPerTokenAndSecond;
+        _withdrawPeriod = __withdrawPeriod;
+        _rewardPerTokenAndSecond = __rewardPerTokenAndSecond;
     }
 
-    function deposit(uint104 amount) public override {
+    function approveAndCallHandlerDeposit(address _sender, uint104 amount) external override {
+        require(msg.sender == currency);
+        _depositFor(_sender, amount);
+    }
+
+    function approveAndCallHandlerIncrease(address _sender, uint256 tokenId, uint104 amount) external override {
+        require(msg.sender == currency);
+        _increasePositionFor(_sender, tokenId, amount);
+    }
+
+    function deposit(uint104 amount) external override {
         require(amount != 0, "amount != 0");
-        IERC20(currency).safeTransferFrom(msg.sender, address(this), amount);
-
-        uint256 mintedId = _mint();
-
-        NftStats storage stats = _nftStats[mintedId];
-        stats.amount = amount;
-        stats.lastUpdateTime = uint48(block.timestamp);
-
-        totalAmountStaked += amount;
-
-        emit Deposit(mintedId, msg.sender, amount);
+        _depositFor(msg.sender, amount);
     }
 
-    function increasePosition(uint256 tokenId, uint104 amount) public override {
-        _updateStakingRewardsAndCheckOwner(tokenId);
-        IERC20(currency).safeTransferFrom(msg.sender, address(this), amount);
-
-        _nftStats[tokenId].amount += amount;
-        totalAmountStaked += amount;
-
-        emit PositionIncreased(tokenId, msg.sender, amount);
+    function increasePosition(uint256 tokenId, uint104 amount) external override {
+        require(amount != 0, "amount != 0");
+        _increasePositionFor(msg.sender, tokenId, amount);
     }
 
-    function withdraw(uint256 tokenId, uint104 amount) public override {
+    function withdraw(uint256 tokenId, uint104 amount) external override {
         require(amount != 0, "amount != 0");
         require(isWithdrawPhase(), "not withdraw time");
+        _updateStakingRewardsAndCheckOwner(tokenId);
 
         NftStats storage stats = _nftStats[tokenId];
 
-        // if not enough funds are available, check that user only withdraws their part
+        // if not enough funds are available, check that user only withdraws their part and only once in this epoche
         uint256 epocheNumber = getEpocheNumber();
-        if(withdrawPercentage[epocheNumber] != BASIS_POINTS) {
-            require(amount <= stats.amount * withdrawPercentage[epocheNumber] / BASIS_POINTS);
+        uint256 percentage = withdrawPercentage[epocheNumber];
+        if(percentage != BASIS_POINTS) {
+            require(!stats.hasWithdrawnInEpoche[epocheNumber], "only one withdraw per epoche");
+            stats.hasWithdrawnInEpoche[epocheNumber] = true;
+            require(amount <= stats.amount * percentage / BASIS_POINTS);
         }
-        // check that it is the first withdraw for tokenId in this epoche
-        require(!stats.hasWithdrawnInEpoche[epocheNumber], "only one withdraw per epoche");
-        stats.hasWithdrawnInEpoche[epocheNumber] = true;
 
-        _updateStakingRewardsAndCheckOwner(tokenId);
-
-        totalAmountStaked -= amount;
+        _totalAmountStaked -= amount;
         stats.amount -= amount;
         IERC20(currency).safeTransfer(msg.sender, amount);
 
         emit Withdrawn(tokenId, msg.sender, amount);
     }
 
-    function getRewards(uint256 tokenId) public override {
+    function getRewards(uint256 tokenId) external override {
         _updateStakingRewards(tokenId);
         address tokenOwner = ownerOf(tokenId);
         uint256 rewardsDue = _nftStats[tokenId].rewardsDue;
@@ -130,23 +126,23 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
 
     //////////////// Owner functionality ///////////////////
 
-    function nextEpoche(uint256 _pedingRewardRate, uint256 length) external override onlyOwner {
+    function nextEpoche(uint256 _pedingRewardRate, uint256 length) external onlyOwner {
         require(block.timestamp > currentEpoche.end, "only once in withdraw Phase");
         currentEpoche = Epoche(
-            block.timestamp + withdrawPeriod,
-            block.timestamp + withdrawPeriod + length,
+            block.timestamp + _withdrawPeriod,
+            block.timestamp + _withdrawPeriod + length,
             currentEpoche.end
         );
-        pendingRewardRate = _pedingRewardRate;
+        _pendingRewardRate = _pedingRewardRate;
         _epocheCounter += 1;
         emit NewEpoche(currentEpoche.start, currentEpoche.end, _pedingRewardRate);
     }
 
-    function applyNewRewardRate() external override onlyOwner {
+    function applyNewRewardRate() external onlyOwner {
         require(!isWithdrawPhase(), "can only apply when withdraw ended");
-        require(pendingRewardRate != 0, "no pending rewardRate");
-        rewardPerTokenAndSecond = pendingRewardRate;
-        pendingRewardRate = 0;
+        require(_pendingRewardRate != 0, "no pending rewardRate");
+        _rewardPerTokenAndSecond = _pendingRewardRate;
+        _pendingRewardRate = 0;
     }
 
     function rescueToken(address token) external onlyOwner {
@@ -155,20 +151,21 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
     }
 
     // Bot related //
-    function addBot(address account) external override onlyOwner {
+    function addBot(address account) external onlyOwner {
         require(!_isBot[account], "already exists");
         _isBot[account] = true;
         emit botAdded(account);
     }
 
-    function removeBot(address account) external override onlyOwner {
+    function removeBot(address account) external onlyOwner {
         require(_isBot[account], "not a bot");
         _isBot[account] = false;
+        _isRegisteredBot[account] = false;
         emit botRemoved(account);
     }
 
-    function withdrawLiquidityToBot(address recipient, uint256 amount) external override onlyOwner {
-        require(_isBot[recipient], "recipient must be a bot");
+    function withdrawLiquidityToBot(address recipient, uint256 amount) external onlyOwner {
+        require(_isRegisteredBot[recipient], "recipient must be a registered bot");
         require(!isWithdrawPhase());
         totalBotBalance -= int256(amount);
         IERC20(currency).transfer(recipient, amount);
@@ -176,27 +173,59 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
         emit WithdrawToBot(recipient, amount);
     }
 
-    function depositAsBot(uint256 amount) external {
-        require(_isBot[msg.sender], "only bots can deposit here");
+    function depositFromBot(address bot, uint256 amount) external {
+        require(_isRegisteredBot[bot], "can only deposit from bot");
+        require(msg.sender == bot || msg.sender == owner());
         require(!isWithdrawPhase());
-        IERC20(currency).safeTransferFrom(msg.sender, address(this), amount);
+        IERC20(currency).transferFrom(bot, address(this), amount);
         totalBotBalance += int256(amount);
         _updateWithdrawPercentage();
-        emit DepositFromBot(msg.sender, amount);
+        emit DepositFromBot(bot, amount);
+    }
+
+    function registerAsBot() external {
+        require(_isBot[msg.sender], "only whitelisted bots can register");
+        require(IERC20(currency).allowance(msg.sender, address(this)) >= 2**255, "approve Spending first");
+        _isRegisteredBot[msg.sender] == true;
+        emit BotRegistered(msg.sender);
     }
 
     ////////////////        Internal      ///////////////////
+    
+    function _depositFor(address from, uint104 amount) internal {
+        IERC20(currency).safeTransferFrom(from, address(this), amount);
+
+        uint256 mintedId = _mint(from);
+
+        NftStats storage stats = _nftStats[mintedId];
+        stats.amount = amount;
+        stats.lastUpdateTime = uint48(block.timestamp);
+
+        _totalAmountStaked += amount;
+
+        emit Deposit(mintedId, from, amount);
+    }
+
+    function _increasePositionFor(address _sender, uint256 tokenId, uint104 amount) internal {
+        _updateStakingRewardsAndCheckOwner(tokenId);
+        IERC20(currency).safeTransferFrom(_sender, address(this), amount);
+
+        _nftStats[tokenId].amount += amount;
+        _totalAmountStaked += amount;
+
+        emit PositionIncreased(tokenId, msg.sender, amount);
+    }
+
+    function _mint(address recipient) internal returns(uint256 mintedId) {
+        mintedId = _idCounter;
+        _safeMint(recipient, mintedId);
+        _idCounter += 1;
+    }
 
     function _updateWithdrawPercentage() internal {
         withdrawPercentage[getEpocheNumber()] = totalBotBalance >= 0 
             ? BASIS_POINTS
-            : uint256(int256(totalAmountStaked) + totalBotBalance) * BASIS_POINTS / totalAmountStaked;
-    }
-
-    function _mint() internal returns(uint256 mintedId) {
-        mintedId = _idCounter;
-        _safeMint(msg.sender, mintedId);
-        _idCounter += 1;
+            : uint256(int256(_totalAmountStaked) + totalBotBalance) * BASIS_POINTS / _totalAmountStaked;
     }
 
     function _updateStakingRewardsAndCheckOwner(uint256 tokenId) internal {
@@ -206,16 +235,16 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
 
     function _updateStakingRewards(uint256 tokenId) internal {
         NftStats storage stats = _nftStats[tokenId];
-        uint256 _lastTimeApplicable = lastTimeRewardApplicable();
+        uint256 _lastTimeApplicable = _lastTimeRewardApplicable();
         if(_lastTimeApplicable > stats.lastUpdateTime) {
-            stats.rewardsDue += uint48((_lastTimeApplicable - stats.lastUpdateTime) * stats.amount * rewardPerTokenAndSecond);
+            stats.rewardsDue += uint48((_lastTimeApplicable - stats.lastUpdateTime) * stats.amount * _rewardPerTokenAndSecond);
         }
         //alternatively do the next line in the if statement.
         //would lead to exploit, where people earn while nothing is staked during withdraw phase
         stats.lastUpdateTime = uint48(block.timestamp);
     }
 
-    function lastTimeRewardApplicable() internal view returns(uint256) {
+    function _lastTimeRewardApplicable() internal view returns(uint256) {
         Epoche memory epoche = currentEpoche;
         if(block.timestamp < epoche.start) {
             return epoche.lastEnd;
@@ -226,8 +255,18 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
         return block.timestamp;
     }
 
+    ////////////////    Views    ////////////////
+
+    function getTotalAmountStaked() external view override returns(uint256) {
+        return _totalAmountStaked;
+    }
+
+    function getRewardRate() external view override returns(uint256) {
+        return _rewardPerTokenAndSecond;
+    }
+
     // method for getting a constant but unique number for one withdrawPhase
-    function getEpocheNumber() internal view returns(uint256) {
+    function getEpocheNumber() public view override returns(uint256) {
         uint256 epocheCounter = _epocheCounter;
         if(block.timestamp > currentEpoche.start) {
             epocheCounter += 1;
@@ -235,39 +274,42 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
         return epocheCounter;
     }
 
-    function _calculateMaxWithdraw() internal view returns(uint256) {
-        return IERC20(currency).balanceOf(address(this)) * BASIS_POINTS / totalAmountStaked;
-    }
-
-    ////////////////      Views    ///////////////////
-
     function isWithdrawPhase() public view override returns(bool) {
         return block.timestamp < currentEpoche.start ||
                block.timestamp > currentEpoche.end;
     }
 
-    function viewNftStats(uint256 tokenId) public view override returns(uint104, uint48, uint104, uint256) {
+    function viewNftStats(uint256 tokenId) external view override 
+        returns(
+            uint104 amountStaked,
+            uint48 lastTimeRewardsUpdate,
+            uint104 rewardsDue,
+            bool hasWithdrawnInEpoche
+        ) {
         require(_exists(tokenId), "Query for non existent Token");
-        return (_nftStats[tokenId].amount, _nftStats[tokenId].lastUpdateTime, _nftStats[tokenId].rewardsDue, 0);
+        NftStats storage stats = _nftStats[tokenId];
+        amountStaked          = stats.amount;
+        lastTimeRewardsUpdate = stats.lastUpdateTime;
+        rewardsDue            = stats.rewardsDue;
+        hasWithdrawnInEpoche  = stats.hasWithdrawnInEpoche[getEpocheNumber()];
     }
 
-    function getUpdatedRewardsDue(uint256 tokenId) external view returns(uint256) {
+    function getUpdatedRewardsDue(uint256 tokenId) external view override returns(uint256) {
         NftStats storage stats = _nftStats[tokenId];
         uint104 amount = stats.amount;
         uint48 lastUpdateTime = stats.lastUpdateTime;
         uint104 rewardsDue = stats.rewardsDue;
-        uint256 _lastTimeApplicable = lastTimeRewardApplicable();
+        uint256 _lastTimeApplicable = _lastTimeRewardApplicable();
         if(_lastTimeApplicable > stats.lastUpdateTime) {
-            rewardsDue += uint104((_lastTimeApplicable - lastUpdateTime) * amount * rewardPerTokenAndSecond);
+            rewardsDue += uint104((_lastTimeApplicable - lastUpdateTime) * amount * _rewardPerTokenAndSecond);
         }
         return rewardsDue;
     }
 
-    function getWithdrawableAmount(uint256 tokenId) external view returns(uint256) {
+    function getWithdrawableAmount(uint256 tokenId) external view override returns(uint256) {
         if(!_nftStats[tokenId].hasWithdrawnInEpoche[getEpocheNumber()]) {
            return withdrawPercentage[getEpocheNumber()] * _nftStats[tokenId].amount / BASIS_POINTS; 
-        } 
-        return 0;
+        }
+        revert("tokenId has already withdrawn this epoche");
     }
-
 }
