@@ -24,16 +24,16 @@ interface IMetaverseStaking is IERC721Upgradeable {
     function increasePosition(uint256 tokenId, uint104 amount) external;
 
     //withdraw from nft
-    function withdraw(uint256 tokenId, uint104 amount) external;
+    function withdraw(uint256 tokenId, uint256 amount) external;
 
     //get MGH rewards for nft
     function getRewards(uint256 tokenId) external;
 
-    //function signature is "0x16f98a75".
-    function approveAndCallHandlerDeposit(address _sender, uint104 amount) external;
+    //function signature is "0xbd9ae7d1".
+    function approveAndCallHandlerDeposit(address _sender, uint256 amount) external;
 
-    //function signature is "0x94b6e7a9".
-    function approveAndCallHandlerIncrease(address _sender, uint256 tokenId, uint104 amount) external;
+    //function signature is "0xd24c0de3".
+    function approveAndCallHandlerIncrease(address _sender, uint256 tokenId, uint256 amount) external;
 
 
     //// VIEWS ////
