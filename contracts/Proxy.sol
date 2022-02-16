@@ -2,9 +2,10 @@
 pragma solidity ^0.8.1;
 
 import "@openzeppelin/contracts/proxy/Proxy.sol";
+import "./Interfaces/IProxy.sol";
 
 
-contract MVSProxy is Proxy {
+contract MVSProxy is Proxy, IProxy {
 
     bytes32 constant _SLOT_ = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
 
@@ -30,10 +31,11 @@ contract MVSProxy is Proxy {
         }
     }
 
-    function upgradeToAndCall(address newImplementation, bytes memory data) public {
+    function upgradeToAndCall(address newImplementation, bytes memory data) public override {
         ProxyStorage storage s = _getProxyStorage();
 
         require(msg.sender == s.upgrader, "not the upgrader");
+        require(newImplementation != s.implementation, "is already the implementation");
         require(_isContract(newImplementation), "not a contract");
 
         s.implementation = newImplementation;
@@ -43,8 +45,8 @@ contract MVSProxy is Proxy {
         }
     }
 
-    function appointNewUpgrader(address newUpgrader) public {
-        require(msg.sender == _getProxyStorage().upgrader);
+    function appointNewUpgrader(address newUpgrader) public override {
+        require(msg.sender == _getProxyStorage().upgrader, "msg.sender == upgrader");
         _getProxyStorage().upgrader = newUpgrader;
     }
 
