@@ -309,6 +309,14 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
         hasWithdrawnInEpoche  = stats.hasWithdrawnInEpoche[getEpocheNumber()];
     }
 
+    function getAmount(uint256 tokenId) external view override returns(uint104) {
+        return _nftStats[tokenId].amount;
+    }
+
+    function getRewardsDue(uint256 tokenId) external view override returns(uint104) {
+        return _nftStats[tokenId].rewardsDue;
+    }
+
     function getUpdatedRewardsDue(uint256 tokenId) external view override returns(uint256) {
         NftStats storage stats = _nftStats[tokenId];
         uint104 amount = stats.amount;
