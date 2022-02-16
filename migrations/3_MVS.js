@@ -1,5 +1,5 @@
-const MetaStaking = artifacts.require('MetaverseStaking')
+const MetaverseStaking = artifacts.require('MetaverseStaking')
 
 module.exports = async function(deployer) {
-    deployer.deploy(MetaStaking);
+    deployer.deploy(MetaverseStaking);
 }

@@ -1,5 +1,5 @@
-const ERC20Staking = artifacts.require('ERC20Mock');
+const ERC20 = artifacts.require('ERC20RewardMock');
 
 module.exports = function(deployer) {
-  deployer.deploy(ERC20Staking, "stakingToken", "STK");
+  deployer.deploy(ERC20, "rewardToken", "RTK");
 }
