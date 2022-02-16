@@ -18,10 +18,10 @@ interface IMetaverseStaking is IERC721Upgradeable {
     //// USER ////
 
     // mint a new nft with amount staked tokens
-    function deposit(uint104 amount) external;
+    function deposit(uint256 amount) external;
 
     //increase the amount of staked tokens of an already existing nft
-    function increasePosition(uint256 tokenId, uint104 amount) external;
+    function increasePosition(uint256 tokenId, uint256 amount) external;
 
     //withdraw from nft
     function withdraw(uint256 tokenId, uint256 amount) external;
