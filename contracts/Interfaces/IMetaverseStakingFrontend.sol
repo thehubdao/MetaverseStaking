@@ -41,6 +41,9 @@ interface IMetaverseStaking is IERC721Upgradeable {
     // total amount of tokens staked
     function getTotalAmountStaked() external view returns(uint256);
 
+    // returns the maximum amount of staking tokens allowed
+    function getMaximumAmountStaked() external view returns(uint256);
+
     // mgh rewards in token per (staking)-token and second
     function getRewardRate() external view returns(uint256);
 
