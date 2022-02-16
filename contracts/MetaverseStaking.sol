@@ -16,21 +16,20 @@ import "./Interfaces/IMetaverseStakingFrontend.sol";
 contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseStaking {
     using SafeERC20 for IERC20;
 
-    uint256 constant private BASIS_POINTS = 1e4;
+    uint256 constant private BILLION_PRECISION_POINTS = 1e9;
     uint256 private _withdrawPeriod;
 
     address public MGH_TOKEN;
     address public currency;
     uint256 private _totalAmountStaked;
+    uint256 private _withdrawPercentage;
     uint256 private _rewardPerTokenAndSecond;
     uint256 private _pendingRewardRate;
 
     //counter for ordered minting
     uint256 private _idCounter;
+
     uint256 private _epocheCounter;
-
-    mapping(uint256 => uint256) withdrawPercentage;
-
     Epoche public currentEpoche;
 
     struct Epoche {
@@ -66,29 +65,30 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
         currentEpoche = Epoche(_firstEpocheStart, _firstEpocheStart + _firstEpocheLength, block.timestamp);
         _withdrawPeriod = __withdrawPeriod;
         _rewardPerTokenAndSecond = __rewardPerTokenAndSecond;
+        _withdrawPercentage = BILLION_PRECISION_POINTS;
     }
 
-    function approveAndCallHandlerDeposit(address _sender, uint104 amount) external override {
+    function approveAndCallHandlerDeposit(address _sender, uint256 amount) external override {
         require(msg.sender == currency);
         _depositFor(_sender, amount);
     }
 
-    function approveAndCallHandlerIncrease(address _sender, uint256 tokenId, uint104 amount) external override {
+    function approveAndCallHandlerIncrease(address _sender, uint256 tokenId, uint256 amount) external override {
         require(msg.sender == currency);
         _increasePositionFor(_sender, tokenId, amount);
     }
 
-    function deposit(uint104 amount) external override {
+    function deposit(uint256 amount) external override {
         require(amount != 0, "amount != 0");
         _depositFor(msg.sender, amount);
     }
 
-    function increasePosition(uint256 tokenId, uint104 amount) external override {
+    function increasePosition(uint256 tokenId, uint256 amount) external override {
         require(amount != 0, "amount != 0");
         _increasePositionFor(msg.sender, tokenId, amount);
     }
 
-    function withdraw(uint256 tokenId, uint104 amount) external override {
+    function withdraw(uint256 tokenId, uint256 amount) external override {
         require(amount != 0, "amount != 0");
         require(isWithdrawPhase(), "not withdraw time");
         _updateStakingRewardsAndCheckOwner(tokenId);
@@ -96,16 +96,17 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
         NftStats storage stats = _nftStats[tokenId];
 
         // if not enough funds are available, check that user only withdraws their part and only once in this epoche
-        uint256 epocheNumber = getEpocheNumber();
-        uint256 percentage = withdrawPercentage[epocheNumber];
-        if(percentage != BASIS_POINTS) {
+        uint256 percentage = _withdrawPercentage;
+        if(percentage != BILLION_PRECISION_POINTS) {
+            uint256 epocheNumber = getEpocheNumber();
             require(!stats.hasWithdrawnInEpoche[epocheNumber], "only one withdraw per epoche");
             stats.hasWithdrawnInEpoche[epocheNumber] = true;
-            require(amount <= stats.amount * percentage / BASIS_POINTS);
+            require(amount <= stats.amount * percentage / BILLION_PRECISION_POINTS);
         }
 
         _totalAmountStaked -= amount;
-        stats.amount -= amount;
+        stats.amount -= uint104(amount);
+
         IERC20(currency).safeTransfer(msg.sender, amount);
 
         emit Withdrawn(tokenId, msg.sender, amount);
@@ -121,6 +122,11 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
         IERC20(MGH_TOKEN).safeTransfer(tokenOwner, rewardsDue);
 
         emit RewardPaid(tokenId, tokenOwner, rewardsDue);
+    }
+
+    function updateWithdrawPercentageManually() external {
+        require(!isWithdrawPhase(), "can only be updated, when locked");
+        _updateWithdrawPercentage();
     }
 
 
@@ -191,14 +197,14 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
     }
 
     ////////////////        Internal      ///////////////////
-    
-    function _depositFor(address from, uint104 amount) internal {
+
+    function _depositFor(address from, uint256 amount) internal {
         IERC20(currency).safeTransferFrom(from, address(this), amount);
 
         uint256 mintedId = _mint(from);
 
         NftStats storage stats = _nftStats[mintedId];
-        stats.amount = amount;
+        stats.amount = uint104(amount);
         stats.lastUpdateTime = uint48(block.timestamp);
 
         _totalAmountStaked += amount;
@@ -206,11 +212,11 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
         emit Deposit(mintedId, from, amount);
     }
 
-    function _increasePositionFor(address _sender, uint256 tokenId, uint104 amount) internal {
+    function _increasePositionFor(address _sender, uint256 tokenId, uint256 amount) internal {
         _updateStakingRewardsAndCheckOwner(tokenId);
         IERC20(currency).safeTransferFrom(_sender, address(this), amount);
 
-        _nftStats[tokenId].amount += amount;
+        _nftStats[tokenId].amount += uint104(amount);
         _totalAmountStaked += amount;
 
         emit PositionIncreased(tokenId, msg.sender, amount);
@@ -223,9 +229,14 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
     }
 
     function _updateWithdrawPercentage() internal {
-        withdrawPercentage[getEpocheNumber()] = totalBotBalance >= 0 
-            ? BASIS_POINTS
-            : uint256(int256(_totalAmountStaked) + totalBotBalance) * BASIS_POINTS / _totalAmountStaked;
+        uint256 totalAmountStaked = _totalAmountStaked;
+        if(totalAmountStaked == 0) {
+            _withdrawPercentage = BILLION_PRECISION_POINTS;
+            return;
+        }
+        _withdrawPercentage = totalBotBalance >= 0
+            ? BILLION_PRECISION_POINTS
+            : uint256(int256(totalAmountStaked) + totalBotBalance) * BILLION_PRECISION_POINTS / totalAmountStaked;
     }
 
     function _updateStakingRewardsAndCheckOwner(uint256 tokenId) internal {
@@ -279,6 +290,10 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
                block.timestamp > currentEpoche.end;
     }
 
+    function getCurrentWithdrawPercentage() public view returns(uint256) {
+        return _withdrawPercentage;
+    }
+
     function viewNftStats(uint256 tokenId) external view override 
         returns(
             uint104 amountStaked,
@@ -308,7 +323,7 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
 
     function getWithdrawableAmount(uint256 tokenId) external view override returns(uint256) {
         if(!_nftStats[tokenId].hasWithdrawnInEpoche[getEpocheNumber()]) {
-           return withdrawPercentage[getEpocheNumber()] * _nftStats[tokenId].amount / BASIS_POINTS; 
+           return _withdrawPercentage * _nftStats[tokenId].amount / BILLION_PRECISION_POINTS; 
         }
         revert("tokenId has already withdrawn this epoche");
     }
