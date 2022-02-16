@@ -58,6 +58,10 @@ interface IMetaverseStaking is IERC721Upgradeable {
             bool hasWithdrawnInEpoche
         );
 
+    function getAmount(uint256 tokenId) external view returns(uint104);
+
+    function getRewardsDue(uint256 tokenId) external view returns(uint104);
+
     // returns the actual amount of mgh rewards claimable right now for an nft
     function getUpdatedRewardsDue(uint256 tokenId) external view returns(uint256);
 
