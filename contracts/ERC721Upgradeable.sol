@@ -28,7 +28,7 @@ contract ERC721Upgradeable is Initializable, ContextUpgradeable, ERC165Upgradeab
     string private _symbol;
 
     // baseUri in storage
-    string private _baseUri;
+    string internal _baseUri;
 
     // Mapping from token ID to owner address
     mapping(uint256 => address) private _owners;
@@ -109,7 +109,7 @@ contract ERC721Upgradeable is Initializable, ContextUpgradeable, ERC165Upgradeab
         require(_exists(tokenId), "ERC721Metadata: URI query for nonexistent token");
 
         string memory baseURI = _baseURI();
-        return bytes(baseURI).length > 0 ? string(abi.encodePacked(baseURI, tokenId.toString())) : "";
+        return bytes(baseURI).length > 0 ? string(abi.encodePacked(baseURI)) : "";
     }
 
     /**
