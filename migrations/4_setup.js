@@ -3,18 +3,20 @@ const ERC20Rewards = artifacts.require('ERC20RewardMock');
 const MetaStaking  = artifacts.require('MetaverseStaking')
 const Proxy        = artifacts.require('MVSProxy');
 
+const ether = require('@openzeppelin/test-helpers/src/ether');
 const { ethers }   = require('ethers');
 
 const upgrader = "0x1670035057CCFC8D8a05c0A9EeB4a0c9071efe14";
-const initializeSelector = "0xb64b5071";
+const initializeSelector = "0xd3519fa2";
 const StakingConfig = {
   epocheStart: 0,
-  epocheLength: 86400,
-  withdrawLength: 600,
-  rewardPerTokenAndSecond: 1,
-  name: "Staking NFT",
+  epocheLength: 3600,
+  withdrawLength: 82800,
+  rewardPerTokenAndYear: 10,
+  maximumStakingAmountInEthers: 1000000,
+  name: "St NFT",
   symbol: "LPNFT",
-  uri: "ipfs://..."
+  uri: "ipfs://QmbXEFM3qneh93bFMPuZxGUwWBrdSdvR3t3Fg67vQRVXz6"
 }
 
 module.exports = async function(deployer, accounts) {
@@ -25,18 +27,21 @@ module.exports = async function(deployer, accounts) {
   let rewardToken = await ERC20Rewards.deployed();
 
   const initData = initializeSelector + abiCoder.encode(
-    ["address","address","uint256","uint256","uint256","uint256","string","string","string"],
+    ["address","address","uint256","uint256","uint256","uint256","uint256","tuple(string name, string symbol, string uri)"],
     [
         rewardToken.address,
         stakingToken.address,
         StakingConfig.epocheStart,
         StakingConfig.epocheLength,
         StakingConfig.withdrawLength,
-        StakingConfig.rewardPerTokenAndSecond,
-        StakingConfig.name,
-        StakingConfig.symbol,
-        StakingConfig.uri
+        StakingConfig.rewardPerTokenAndYear,
+        StakingConfig.maximumStakingAmountInEthers,
+        {
+          name: StakingConfig.name,
+          symbol: StakingConfig.symbol,
+          uri: StakingConfig.uri
+        }
     ]).slice(2);
-
+    console.log(imp.address, {upgrader, initData})
   await deployer.deploy(Proxy, imp.address, upgrader, initData);
 }
