@@ -18,7 +18,7 @@ interface IMetaverseStaking is IERC721Upgradeable {
     //// USER ////
 
     // mint a new nft with amount staked tokens
-    function deposit(uint256 amount) external;
+    function deposit(uint256 tokenId, uint256 amount) external;
 
     //increase the amount of staked tokens of an already existing nft
     function increasePosition(uint256 tokenId, uint256 amount) external;
@@ -30,7 +30,7 @@ interface IMetaverseStaking is IERC721Upgradeable {
     function getRewards(uint256 tokenId) external;
 
     //function signature is "0xbd9ae7d1".
-    function approveAndCallHandlerDeposit(address _sender, uint256 amount) external;
+    function approveAndCallHandlerDeposit(address _sender, uint256 tokenId, uint256 amount) external;
 
     //function signature is "0xd24c0de3".
     function approveAndCallHandlerIncrease(address _sender, uint256 tokenId, uint256 amount) external;
@@ -79,10 +79,8 @@ interface IMetaverseStaking is IERC721Upgradeable {
     event Withdrawn(uint256 indexed tokenId, address indexed recipient, uint256 amount);
     event RewardPaid(uint256 indexed tokenId, address indexed recipient, uint256 amount);
 
-    event NewEpoche(uint256 start, uint256 length, uint256 pendingRewardRate);
+    event NewEpoche(uint256 start, uint256 end, uint256 pendingRewardRate);
 
-    event botAdded(address indexed account);
-    event botRemoved(address indexed account);
     event BotRegistered(address indexed account);
 
     event WithdrawToBot(address indexed recipient, uint256 amount);
