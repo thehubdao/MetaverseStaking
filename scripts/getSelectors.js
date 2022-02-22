@@ -4,7 +4,6 @@ const { keccak256 }  = require('ethereum-cryptography/keccak');
 const { ethers }     = require('ethers');
 
 function getSelectors (contract) {
-  console.log(contract.abi);
     const selectors = contract.abi.reduce((acc, val) => {
       if (val.type === 'function') {
         let signature = val.name + '(';
@@ -13,8 +12,6 @@ function getSelectors (contract) {
             if(i != val.inputs.length - 1) signature = signature + ',';
         }
         signature = signature + ')';
-        console.log(signature);
-        
         acc.push(
           Buffer.from(ethers.utils.solidityKeccak256(
             ['string'],
@@ -32,6 +29,8 @@ function getSelectors (contract) {
 function checkSelectorClash() {
     const ImpSelectors = getSelectors(Implementation);
     const ProxySelectors = getSelectors(ProxyContract);
+    console.log({ImpSelectors});
+    console.log({ProxySelectors});
     for(let i = 0; i < ProxySelectors.length; i++) {
         for(let k = 0; k < ImpSelectors.length; k++) {
             console.log(ImpSelectors[k] == ProxySelectors[i]);
