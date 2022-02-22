@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.1;
+pragma abicoder v2;
 
 // libraries
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -17,17 +18,17 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
     using SafeERC20 for IERC20;
 
     uint256 constant private BILLION_PRECISION_POINTS = 1e9;
+    uint256 constant private SECONDS_PER_YEAR = 52 weeks;
+
     uint256 private _withdrawPeriod;
 
     address public MGH_TOKEN;
     address public currency;
     uint256 private _totalAmountStaked;
+    uint256 private _maximumAmountStaked;
     uint256 private _withdrawPercentage;
-    uint256 private _rewardPerTokenAndSecond;
+    uint256 private _rewardPerTokenAndYear;
     uint256 private _pendingRewardRate;
-
-    //counter for ordered minting
-    uint256 private _idCounter;
 
     uint256 private _epocheCounter;
     Epoche public currentEpoche;
@@ -36,6 +37,12 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
         uint256 start;
         uint256 end;
         uint256 lastEnd;
+    }
+
+    struct initNftMetadata {
+        string name;
+        string symbol;
+        string baseUri;
     }
 
     mapping(uint256 => NftStats) private _nftStats;
@@ -52,35 +59,36 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
         uint256 _firstEpocheStart,
         uint256 _firstEpocheLength,
         uint256 __withdrawPeriod,
-        uint256 __rewardPerTokenAndSecond,
-        string calldata name,
-        string calldata symbol,
-        string calldata baseUri
+        uint256 __rewardPerTokenAndYear,
+        uint256 __maximumAmountStaked,
+        initNftMetadata memory nftMetaData
     ) public initializer {
         __Ownable_init();
-        __ERC721_init(name, symbol, baseUri);
+        __ERC721_init(nftMetaData.name, nftMetaData.symbol, nftMetaData.baseUri);
         MGH_TOKEN = mghToken;
         currency = _currency;
         if(_firstEpocheStart == 0) _firstEpocheStart = block.timestamp + __withdrawPeriod;
         currentEpoche = Epoche(_firstEpocheStart, _firstEpocheStart + _firstEpocheLength, block.timestamp);
         _withdrawPeriod = __withdrawPeriod;
-        _rewardPerTokenAndSecond = __rewardPerTokenAndSecond;
+        _rewardPerTokenAndYear = __rewardPerTokenAndYear;
+        _maximumAmountStaked = __maximumAmountStaked * 1 ether;
         _withdrawPercentage = BILLION_PRECISION_POINTS;
     }
-
-    function approveAndCallHandlerDeposit(address _sender, uint256 amount) external override {
-        require(msg.sender == currency);
-        _depositFor(_sender, amount);
+    
+    // we have a guarantee from sand token contract, that the first param equals the former msg.sender (the approver)
+    function approveAndCallHandlerDeposit(address _sender, uint256 tokenId, uint256 amount) external override {
+        require(msg.sender == currency, "callable by token contract");
+        _depositFor(_sender, tokenId, amount);
     }
 
     function approveAndCallHandlerIncrease(address _sender, uint256 tokenId, uint256 amount) external override {
-        require(msg.sender == currency);
+        require(msg.sender == currency, "callable by token contract");
         _increasePositionFor(_sender, tokenId, amount);
     }
 
-    function deposit(uint256 amount) external override {
+    function deposit(uint256 tokenId, uint256 amount) external override {
         require(amount != 0, "amount != 0");
-        _depositFor(msg.sender, amount);
+        _depositFor(msg.sender, tokenId, amount);
     }
 
     function increasePosition(uint256 tokenId, uint256 amount) external override {
@@ -91,9 +99,15 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
     function withdraw(uint256 tokenId, uint256 amount) external override {
         require(amount != 0, "amount != 0");
         require(isWithdrawPhase(), "not withdraw time");
-        _updateStakingRewardsAndCheckOwner(tokenId);
+        require(msg.sender == ownerOf(tokenId), "not your nft");
 
         NftStats storage stats = _nftStats[tokenId];
+
+        _updateStakingRewards(tokenId);
+        stats.amount -= uint104(amount);
+        _totalAmountStaked -= amount;
+
+        IERC20(currency).safeTransfer(msg.sender, amount);
 
         // if not enough funds are available, check that user only withdraws their part and only once in this epoche
         uint256 percentage = _withdrawPercentage;
@@ -104,17 +118,13 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
             require(amount <= stats.amount * percentage / BILLION_PRECISION_POINTS);
         }
 
-        _totalAmountStaked -= amount;
-        stats.amount -= uint104(amount);
-
-        IERC20(currency).safeTransfer(msg.sender, amount);
-
         emit Withdrawn(tokenId, msg.sender, amount);
     }
 
     function getRewards(uint256 tokenId) external override {
-        _updateStakingRewards(tokenId);
         address tokenOwner = ownerOf(tokenId);
+
+        _updateStakingRewards(tokenId);
         uint256 rewardsDue = _nftStats[tokenId].rewardsDue;
         // careful, this only works as long as 1 unit of the token is practically worthless:
         // setting to 1 to save gas, value donated is practically 0 and cannot be exploited because of gas costs
@@ -134,6 +144,7 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
 
     function nextEpoche(uint256 _pedingRewardRate, uint256 length) external onlyOwner {
         require(block.timestamp > currentEpoche.end, "only once in withdraw Phase");
+        require(length != 0, "length != 0");
         currentEpoche = Epoche(
             block.timestamp + _withdrawPeriod,
             block.timestamp + _withdrawPeriod + length,
@@ -145,9 +156,9 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
     }
 
     function applyNewRewardRate() external onlyOwner {
-        require(!isWithdrawPhase(), "can only apply when withdraw ended");
+        require(!isWithdrawPhase(), "only after withdrawPhase");
         require(_pendingRewardRate != 0, "no pending rewardRate");
-        _rewardPerTokenAndSecond = _pendingRewardRate;
+        _rewardPerTokenAndYear = _pendingRewardRate;
         _pendingRewardRate = 0;
     }
 
@@ -160,14 +171,12 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
     function addBot(address account) external onlyOwner {
         require(!_isBot[account], "already exists");
         _isBot[account] = true;
-        emit botAdded(account);
     }
 
     function removeBot(address account) external onlyOwner {
         require(_isBot[account], "not a bot");
         _isBot[account] = false;
         _isRegisteredBot[account] = false;
-        emit botRemoved(account);
     }
 
     function withdrawLiquidityToBot(address recipient, uint256 amount) external onlyOwner {
@@ -191,41 +200,44 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
 
     function registerAsBot() external {
         require(_isBot[msg.sender], "only whitelisted bots can register");
-        require(IERC20(currency).allowance(msg.sender, address(this)) >= 2**255, "approve Spending first");
         _isRegisteredBot[msg.sender] == true;
         emit BotRegistered(msg.sender);
     }
 
+    function setBaseUri(string memory newUri) external onlyOwner {
+        _baseUri = newUri;
+    }
+
+    function setMaximumAmount(uint256 amountInEther) external onlyOwner {
+        _maximumAmountStaked = amountInEther * 1 ether;
+    }
+
     ////////////////        Internal      ///////////////////
 
-    function _depositFor(address from, uint256 amount) internal {
-        IERC20(currency).safeTransferFrom(from, address(this), amount);
+    function _depositFor(address _sender, uint256 tokenId, uint256 amount) internal {
+        require(amount + _totalAmountStaked <= _maximumAmountStaked, "maximum amount is reached");
+        IERC20(currency).safeTransferFrom(_sender, address(this), amount);
 
-        uint256 mintedId = _mint(from);
+        _mint(_sender, tokenId);
 
-        NftStats storage stats = _nftStats[mintedId];
+        NftStats storage stats = _nftStats[tokenId];
         stats.amount = uint104(amount);
         stats.lastUpdateTime = uint48(block.timestamp);
 
         _totalAmountStaked += amount;
 
-        emit Deposit(mintedId, from, amount);
+        emit Deposit(tokenId, _sender, amount);
     }
 
     function _increasePositionFor(address _sender, uint256 tokenId, uint256 amount) internal {
-        _updateStakingRewardsAndCheckOwner(tokenId);
+        require(amount + _totalAmountStaked <= _maximumAmountStaked, "maximum amount is reached");
         IERC20(currency).safeTransferFrom(_sender, address(this), amount);
+        _updateStakingRewards(tokenId);
 
         _nftStats[tokenId].amount += uint104(amount);
         _totalAmountStaked += amount;
 
-        emit PositionIncreased(tokenId, msg.sender, amount);
-    }
-
-    function _mint(address recipient) internal returns(uint256 mintedId) {
-        mintedId = _idCounter;
-        _safeMint(recipient, mintedId);
-        _idCounter += 1;
+        emit PositionIncreased(tokenId, _sender, amount);
     }
 
     function _updateWithdrawPercentage() internal {
@@ -239,16 +251,15 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
             : uint256(int256(totalAmountStaked) + totalBotBalance) * BILLION_PRECISION_POINTS / totalAmountStaked;
     }
 
-    function _updateStakingRewardsAndCheckOwner(uint256 tokenId) internal {
-        require(msg.sender == ownerOf(tokenId), "not your nft");
-        _updateStakingRewards(tokenId);
-    }
-
     function _updateStakingRewards(uint256 tokenId) internal {
         NftStats storage stats = _nftStats[tokenId];
         uint256 _lastTimeApplicable = _lastTimeRewardApplicable();
-        if(_lastTimeApplicable > stats.lastUpdateTime) {
-            stats.rewardsDue += uint48((_lastTimeApplicable - stats.lastUpdateTime) * stats.amount * _rewardPerTokenAndSecond);
+        uint256 _lastTimeUpdated = stats.lastUpdateTime;
+        uint256 timePassed = _lastTimeApplicable > _lastTimeUpdated
+            ? _lastTimeApplicable - _lastTimeUpdated
+            : 0;
+        if(timePassed > 0) {
+            stats.rewardsDue += uint48(timePassed * stats.amount * _rewardPerTokenAndYear / SECONDS_PER_YEAR);
         }
         //alternatively do the next line in the if statement.
         //would lead to exploit, where people earn while nothing is staked during withdraw phase
@@ -256,12 +267,11 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
     }
 
     function _lastTimeRewardApplicable() internal view returns(uint256) {
-        Epoche memory epoche = currentEpoche;
-        if(block.timestamp < epoche.start) {
-            return epoche.lastEnd;
+        if(block.timestamp < currentEpoche.start) {
+            return currentEpoche.lastEnd;
         }
-        if(block.timestamp > epoche.end) {
-            return epoche.end;
+        if(block.timestamp > currentEpoche.end) {
+            return currentEpoche.end;
         }
         return block.timestamp;
     }
@@ -272,8 +282,12 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
         return _totalAmountStaked;
     }
 
+    function getMaximumAmountStaked() external view override returns(uint256) {
+        return _maximumAmountStaked;
+    }
+
     function getRewardRate() external view override returns(uint256) {
-        return _rewardPerTokenAndSecond;
+        return _rewardPerTokenAndYear;
     }
 
     // method for getting a constant but unique number for one withdrawPhase
@@ -300,7 +314,8 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
             uint48 lastTimeRewardsUpdate,
             uint104 rewardsDue,
             bool hasWithdrawnInEpoche
-        ) {
+        )
+    {
         require(_exists(tokenId), "Query for non existent Token");
         NftStats storage stats = _nftStats[tokenId];
         amountStaked          = stats.amount;
@@ -323,8 +338,10 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
         uint48 lastUpdateTime = stats.lastUpdateTime;
         uint104 rewardsDue = stats.rewardsDue;
         uint256 _lastTimeApplicable = _lastTimeRewardApplicable();
-        if(_lastTimeApplicable > stats.lastUpdateTime) {
-            rewardsDue += uint104((_lastTimeApplicable - lastUpdateTime) * amount * _rewardPerTokenAndSecond);
+        if(_lastTimeApplicable > lastUpdateTime) {
+            rewardsDue += uint104(
+                (_lastTimeApplicable - lastUpdateTime) * amount * _rewardPerTokenAndYear / SECONDS_PER_YEAR
+            );
         }
         return rewardsDue;
     }
