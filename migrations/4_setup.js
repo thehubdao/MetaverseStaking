@@ -42,6 +42,5 @@ module.exports = async function(deployer, accounts) {
           uri: StakingConfig.uri
         }
     ]).slice(2);
-    console.log(imp.address, {upgrader, initData})
   await deployer.deploy(Proxy, imp.address, upgrader, initData);
 }

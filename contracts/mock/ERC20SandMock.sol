@@ -5,9 +5,9 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 
 contract ERC20SandMock is ERC20 {
-    
+
     constructor(string memory name, string memory symbol) ERC20(name, symbol) {
-        _mint(0x7812B090d1a3Ead77B5D8F470D3faCA900A6ccB9, 1000000 ether);
+        _mint(msg.sender, 10000000 ether);
     }
 
     function approveAndCall(
