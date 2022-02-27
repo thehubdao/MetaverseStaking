@@ -6,6 +6,7 @@ const Proxy            = artifacts.require('MVSProxy');
 const { time, BN, expectEvent, expectRevert } = require('@openzeppelin/test-helpers');
 const { MAX_UINT256 } = require('@openzeppelin/test-helpers/src/constants');
 const ether = require('@openzeppelin/test-helpers/src/ether');
+const { Web3, web3 } = require('@openzeppelin/test-helpers/src/setup');
 const { keccak256 }    = require('ethereum-cryptography/keccak');
 
 const { ethers } = require('ethers');
@@ -32,7 +33,7 @@ const StakingConfig = {
     uri: "ipfs://..."
 }
 
-contract('MetaverseStakingMain', ([bob, alice, owner, upgrader]) => {
+contract('MetaverseStakingMain', ([bob, alice, bot, owner, upgrader]) => {
     console.log({approveAndCallDepositSelector, approveAndCallIncreaseSelector})
     let abiCoder = new ethers.utils.AbiCoder;
     let provider = new ethers.providers.JsonRpcProvider("http://127.0.0.1:8545");
@@ -42,6 +43,7 @@ contract('MetaverseStakingMain', ([bob, alice, owner, upgrader]) => {
     const byAlice = { from: alice };
     const byOwner = { from: owner };
     const byUpgrader = { from: upgrader };
+    const byBot = { from: bot };
 
     // object for accessing the infos of first epoche
     let currentEpoche;
@@ -71,11 +73,10 @@ contract('MetaverseStakingMain', ([bob, alice, owner, upgrader]) => {
         this.MVS  = await MetaverseStaking.at(this.PROX.address);
 
         currentEpoche = await this.MVS.currentEpoche.call();
-        console.log({currentEpoche})
 
         tokenId = () => {
             idCounter++;
-            return  idCounter - 1;
+            return  idCounter;
         }
         tokenIdFail = () => {
             return keccak256("will fail");
@@ -162,7 +163,7 @@ contract('MetaverseStakingMain', ([bob, alice, owner, upgrader]) => {
                     MAX_UINT256,
                     approveAndCallIncreaseSelector + abiCoder.encode(
                         ["address", "uint256"],
-                        [bob, 1]
+                        [bob, tokenIdFail()]
                     ).slice(3),
                     byBob
                 ),
@@ -174,7 +175,7 @@ contract('MetaverseStakingMain', ([bob, alice, owner, upgrader]) => {
                     MAX_UINT256,
                     '0x12345678' + abiCoder.encode(
                         ["address", "uint256"],
-                        [bob, 1]
+                        [bob, tokenIdFail()]
                     ).slice(2),
                     byBob
                 )
@@ -231,15 +232,15 @@ contract('MetaverseStakingMain', ([bob, alice, owner, upgrader]) => {
         })
         it('mints conscutively from 0', async () => {
             await this.MVS.deposit(tokenId(), 1, byBob);
-            assert.equal(await this.MVS.ownerOf(0), bob);
+            assert.equal(await this.MVS.ownerOf(idCounter), bob);
         })
         it('deposits with approveAndCall()', async () => {
             const forwardData = approveAndCallDepositSelector + abiCoder.encode(["address", "uint256", "uint256"], [bob, tokenId(), 1]).slice(2);
             const depositReceipt = await this.ERC.approveAndCall(this.MVS.address, MAX_UINT256, forwardData, byBob);
-            assert.equal(await this.MVS.ownerOf(1), bob);
+            assert.equal(await this.MVS.ownerOf(idCounter), bob);
             assert.equal(await this.ERC.balanceOf(this.MVS.address), '2');
             await expectEvent.inTransaction(depositReceipt.tx, this.MVS, "Deposit", {
-                tokenId: (idCounter - 1).toString(),
+                tokenId: idCounter.toString(),
                 staker: bob,
                 amount: '1'
             })
@@ -249,24 +250,24 @@ contract('MetaverseStakingMain', ([bob, alice, owner, upgrader]) => {
             const now = await time.latest();
 
             assert.equal(await this.ERC.balanceOf(this.MVS.address), '3');
-            const nftStats_before = await this.MVS.viewNftStats(2);
+            const nftStats_before = await this.MVS.viewNftStats(idCounter);
             assert.equal((nftStats_before[0].toString(), nftStats_before[1].toString(), nftStats_before[2].toString(), nftStats_before[3]), 
                         ('1', now.toString(), '0', false));
 
             await time.increase(5);
-            const withdrawReceipt = await this.MVS.withdraw(2, 1, byBob);
-            const nftStats_after = await this.MVS.viewNftStats(2);
+            const withdrawReceipt = await this.MVS.withdraw(idCounter, 1, byBob);
+            const nftStats_after = await this.MVS.viewNftStats(idCounter);
             assert.equal((nftStats_after[0].toString(), nftStats_after[1].toString(), nftStats_after[2].toString(), nftStats_after[3]), 
                 	    ('0', (now.add(new BN('6'))).toString(), '0', false));
 
             assert.equal(await this.ERC.balanceOf(this.MVS.address), '2');
             await expectEvent(depositReceipt, "Deposit", {
-                tokenId: '2',
+                tokenId: idCounter.toString(),
                 staker: bob,
                 amount: '1'
             })
             await expectEvent(withdrawReceipt, "Withdrawn", {
-                tokenId: '2',
+                tokenId: idCounter.toString(),
                 recipient: bob,
                 amount: '1'
             })
@@ -275,18 +276,18 @@ contract('MetaverseStakingMain', ([bob, alice, owner, upgrader]) => {
     describe('increases Position', async () => {
         it('reverts on 0 input', async () => {
             await expectRevert(
-                this.MVS.increasePosition(2, 0, byBob),
+                this.MVS.increasePosition(idCounter, 0, byBob),
                 "amount != 0"
             )
         })
         it('increases with approveAndCall()', async () => {
             let rewardsBefore = await this.MVS.getUpdatedRewardsDue(2);
-            assert.equal(await this.MVS.getAmount(2), '0');
+            assert.equal(await this.MVS.getAmount(idCounter), '0');
             assert.equal(await this.MVS.getTotalAmountStaked(), '2');
-            assert.equal(await this.MVS.ownerOf(2), bob);
+            assert.equal(await this.MVS.ownerOf(idCounter), bob);
             const forwardData = approveAndCallIncreaseSelector + abiCoder.encode(
                     ["address", "uint256", "uint256"],
-                    [bob, 2, 1])
+                    [bob, idCounter, 1])
                     .slice(2);
             const increaseReceipt = await this.ERC.approveAndCall(
                 this.MVS.address,
@@ -297,19 +298,19 @@ contract('MetaverseStakingMain', ([bob, alice, owner, upgrader]) => {
             let rewardsAfter = await this.MVS.getUpdatedRewardsDue(2);
             assert.equal(await this.MVS.balanceOf(bob), '3');
             assert.equal(await this.MVS.getTotalAmountStaked(), '3');
-            assert.equal(await this.MVS.getAmount(2), '1');
+            assert.equal(await this.MVS.getAmount(idCounter), '1');
             await expectEvent.inTransaction(increaseReceipt.tx, this.MVS, "PositionIncreased", {
-                tokenId: '2',
+                tokenId: idCounter.toString(),
                 staker: bob,
                 amount: '1'
             })
         })
         it('increases with increasePosition()', async () => {
-            assert.equal(await this.MVS.getAmount(2), '1');
-            let increaseReceipt = await this.MVS.increasePosition(2, 1, byBob);
-            assert.equal(await this.MVS.getAmount(2), '2');
+            assert.equal(await this.MVS.getAmount(idCounter), '1');
+            let increaseReceipt = await this.MVS.increasePosition(idCounter, 1, byBob);
+            assert.equal(await this.MVS.getAmount(idCounter), '2');
             await expectEvent(increaseReceipt, "PositionIncreased", {
-                tokenId: '2',
+                tokenId: idCounter.toString(),
                 staker: bob,
                 amount: '1'
             })
@@ -318,59 +319,57 @@ contract('MetaverseStakingMain', ([bob, alice, owner, upgrader]) => {
     describe('withdraws_withoutLosses', async () => {
         it('reverts on 0 input', async () => {
             await expectRevert(
-                this.MVS.withdraw(0, 0, byOwner),
+                this.MVS.withdraw(idCounter, 0, byOwner),
                 'amount != 0'
             )
         })
         it('can only be called by nft owner', async () => {
             await expectRevert(
-                this.MVS.withdraw(0, 1, byOwner),
+                this.MVS.withdraw(idCounter, 1, byOwner),
                 "not your nft"
             )
         })
         it('can withdraw everything without bot withdraws', async () => {
-            const stakeAmount = await this.MVS.getAmount(2);
-            const rewardsReceipt = await this.MVS.withdraw(2, stakeAmount, byBob);
-            assert.equal(await this.MVS.getAmount(2), '0');
+            const stakeAmount = await this.MVS.getAmount(idCounter);
+            const rewardsReceipt = await this.MVS.withdraw(idCounter, stakeAmount, byBob);
+            assert.equal(await this.MVS.getAmount(idCounter), '0');
             await expectEvent(rewardsReceipt, "Withdrawn", {
-                tokenId: '2',
+                tokenId: idCounter.toString(),
                 recipient: bob,
                 amount: stakeAmount.toString()
             })
         })
         it('only possible in withdraw phase', async() => {
-            await this.MVS.increasePosition(2, 1, byBob);
+            await this.MVS.increasePosition(idCounter, 1, byBob);
             await time.increase(1000);
             assert.equal(await this.MVS.isWithdrawPhase(), false);
             await expectRevert(
-                this.MVS.withdraw(2, 1, byBob),
+                this.MVS.withdraw(idCounter, 1, byBob),
                 "not withdraw time"
             )
         })
     })
     describe('get Reward and reward calculations', async () => {
         it('anyone can getRewards for anyone', async () => {
-            assert.equal(await this.MVS.ownerOf(2), bob);
+            assert.equal(await this.MVS.ownerOf(idCounter), bob);
             const balanceBefore = await this.MGH.balanceOf(bob);
-            let amountAvailable = (await this.MVS.getUpdatedRewardsDue(2)).add(new BN('1'));
-            console.log({amountAvailable}, amountAvailable.toString());
-            let withdrawForReceipt = await this.MVS.getRewards(2, byAlice);
-            assert.equal(await this.MVS.getUpdatedRewardsDue(2), '1');
+            let amountAvailable = (await this.MVS.getUpdatedRewardsDue(idCounter)).add(new BN('1'));
+            let withdrawForReceipt = await this.MVS.getRewards(idCounter, byAlice);
+            assert.equal(await this.MVS.getUpdatedRewardsDue(idCounter), '1');
             await expectEvent(withdrawForReceipt, "RewardPaid", {
-                tokenId: '2',
+                tokenId: idCounter.toString(),
                 recipient: bob,
                 amount: amountAvailable.toString()
             })
             assert.equal((await this.MGH.balanceOf(bob)).toString(), balanceBefore.add(amountAvailable).toString());
         })
         it('rewards start immediately during locked phase', async () => {
-            const idToMint = idCounter;
             await this.MVS.deposit(tokenId(), 1, byAlice);
             await time.increase(100);
-            let rewardsReceipt = await this.MVS.getRewards(idToMint, byAlice);
-            assert.equal(await this.MVS.getUpdatedRewardsDue(idToMint), '1');
+            let rewardsReceipt = await this.MVS.getRewards(idCounter, byAlice);
+            assert.equal(await this.MVS.getUpdatedRewardsDue(idCounter), '1');
             await expectEvent(rewardsReceipt, "RewardPaid", {
-                tokenId: idToMint.toString(),
+                tokenId: idCounter.toString(),
                 recipient: alice,
                 amount: '100'
             })
@@ -378,14 +377,14 @@ contract('MetaverseStakingMain', ([bob, alice, owner, upgrader]) => {
         it('rewards are not paid during withdrawPhase', async () => {
             const applicableTime = currentEpoche.end.sub(await time.latest()).add(new BN('1'));
             await time.increaseTo(currentEpoche.end.add(new BN('100')));
-            const rewardsReceipt = await this.MVS.getRewards(idCounter - 1);
+            const rewardsReceipt = await this.MVS.getRewards(idCounter);
             await expectEvent(rewardsReceipt, "RewardPaid", {
-                tokenId: (idCounter - 1).toString(),
+                tokenId: idCounter.toString(),
                 recipient: alice,
                 amount: applicableTime
             })
             await time.increase(10);
-            assert.equal(await this.MVS.getUpdatedRewardsDue(idCounter - 1), '1');
+            assert.equal(await this.MVS.getUpdatedRewardsDue(idCounter), '1');
         })
     })
     describe('owner functions', async () => {
@@ -405,11 +404,11 @@ contract('MetaverseStakingMain', ([bob, alice, owner, upgrader]) => {
             it('works and leaves epocheNumber unchanged', async () => {
                 const epocheNumberBefore = await this.MVS.getEpocheNumber();
                 // pending reward rate = 2/s
-                const epocheReceipt = await this.MVS.nextEpoche(62899200, 1000, byOwner);
+                const epocheReceipt = await this.MVS.nextEpoche(62899200, 10000, byOwner);
                 const now = await time.latest();
                 await expectEvent(epocheReceipt, "NewEpoche", {
                     start: now.add(new BN(StakingConfig.withdrawLength.toString())),
-                    end: now.add(new BN(StakingConfig.withdrawLength.toString())).add(new BN('1000')),
+                    end: now.add(new BN(StakingConfig.withdrawLength.toString())).add(new BN('10000')),
                     pendingRewardRate: '62899200'
                 })
                 assert.equal(await this.MVS.isWithdrawPhase(), true);
@@ -434,22 +433,147 @@ contract('MetaverseStakingMain', ([bob, alice, owner, upgrader]) => {
                         "only after withdrawPhase"
                     )
                 })
-                it('works in locking phase', async () => {
-                    await time.increase(1000);
-                    assert.equal(await this.MVS.getRewardRate(), '31449600');
-                    const rewardRateReceipt = await this.MVS.applyNewRewardRate(byOwner);
-                    assert.equal(await this.MVS.getRewardRate(), '62899200');
+            })
+        })
+        describe('bot functionality', async () => {
+            it('can only be withdrawn by owner', async () => {
+                await expectRevert(
+                    this.MVS.withdrawLiquidityToBot(bot, 1, byBob),
+                    "Ownable: caller is not the owner"
+                );
+            })
+            it('cannot be withdrawn to without being registered', async () => {
+                await expectRevert(
+                    this.MVS.withdrawLiquidityToBot(bot, 1, byOwner),
+                    "recipient must be a registered bot"
+                )
+            })
+            it('cannot register as bot without being whitelisted', async () => {
+                await expectRevert(
+                    this.MVS.registerAsBot(byBot),
+                    "only whitelisted bots can register"
+                )
+            })
+            it('cannot remove non existing bot', async () => {
+                await expectRevert(
+                    this.MVS.removeBot(bot, byOwner),
+                    "not a bot"
+                )
+            })
+            it('can only add and remove bot as owner', async () => {
+                await expectRevert(
+                    this.MVS.addBot(bot, byBot),
+                    "Ownable: caller is not the owner"
+                )
+                await expectRevert(
+                    this.MVS.removeBot(bot, byBot),
+                    "Ownable: caller is not the owner"
+                )
+            })
+            it('adds bot as owner', async () => {
+                assert.equal(await this.MVS.isBot(bot), false);
+                await this.MVS.addBot(bot, byOwner);
+                assert.equal(await this.MVS.isBot(bot), true);
+            })
+            it('cannot add bot twice', async () => { 
+                await expectRevert(
+                    this.MVS.addBot(bot, byOwner),
+                    "already exists"
+                )
+            })
+            it('added bot can register', async () => {
+                assert.equal(await this.MVS.isBot(bot), true);
+                assert.equal(await this.MVS.isRegisteredBot(bot), false);
+                let registerReceipt = await this.MVS.registerAsBot(byBot);
+                await expectEvent(registerReceipt, "BotRegistered", { account: bot });
+                assert.equal(await this.MVS.isRegisteredBot(bot), true);
+            })
+            it('cannot withdraw to bot in withdrawPhase', async () => {
+                await expectRevert(
+                    this.MVS.withdrawLiquidityToBot(bot, 1, byOwner),
+                    "can only use in locking phase"
+                )
+            })
+            it('from the previous test: can apply new reward rate in locking phase', async () => {
+                await time.increase(1000);
+                assert.equal(await this.MVS.getRewardRate(), '31449600');
+                const rewardRateReceipt = await this.MVS.applyNewRewardRate(byOwner);
+                assert.equal(await this.MVS.getRewardRate(), '62899200');
+            })
+            it('from the previous test: cannot set to 0', async () => {
+                await expectRevert(
+                    this.MVS.applyNewRewardRate(byOwner),
+                    "no pending rewardRate"
+                )
+            })
+            it('transfers tokens, emits event and updates state', async () => {
+                assert.equal((await this.MVS.getCurrentWithdrawPercentage()).toString(), '1000000000');
+                const withdrawToBotReceipt = await this.MVS.withdrawLiquidityToBot(bot, 1, byOwner);
+                assert.equal(await this.MVS.getBotBalance(), '-1');
+                assert.equal(await this.MVS.getCurrentWithdrawPercentage(), '750000000');
+                await expectEvent.inTransaction(withdrawToBotReceipt.tx, this.ERC, "Transfer", {
+                    from: this.MVS.address,
+                    to: bot,
+                    value: '1'
                 })
-                it('cannot set to 0', async () => {
-                    await expectRevert(
-                        this.MVS.applyNewRewardRate(byOwner),
-                        "no pending rewardRate"
-                    )
+                await expectEvent(withdrawToBotReceipt, "WithdrawToBot", {
+                    recipient: bot,
+                    amount: '1'
                 })
             })
         })
     })
+    describe('withdraw_withLosses', async () => {
+        it('calculates withdraw percentage correctly', async () => {
+            const totalAmountStaked = (await this.MVS.getTotalAmountStaked()).toNumber();
+            await this.MVS.deposit(tokenId(), 100 - totalAmountStaked, byAlice);
+            await this.MVS.withdrawLiquidityToBot(bot, 49, byOwner);
+            assert.equal((await this.MVS.getCurrentWithdrawPercentage()).toString(), '500000000');
+            await time.increase(10000);
+        })
+        it('cannot withdraw more than the percentage', async() => {
+            await expectRevert(
+                this.MVS.withdraw(idCounter, 96/2 + 1, byAlice),
+                "getCurrentWithdrawPercentage"
+            )
+            await expectRevert.unspecified(
+                this.MVS.withdraw(idCounter, MAX_UINT256, byAlice),
+            )
+        })
+        it('can withdraw exactly percentage, emits event', async () => {
+            let withdrawTransactionReceipt = await this.MVS.withdraw(idCounter, 48, byAlice);
+            await expectEvent(withdrawTransactionReceipt, "Withdrawn", {
+                tokenId: idCounter.toString(),
+                recipient: alice,
+                amount: '48'
+            })
+            await expectEvent.inTransaction(withdrawTransactionReceipt.tx, this.ERC, "Transfer", {
+                from: this.MVS.address,
+                to: alice,
+                value: '48'
+            })
+        })
+        it('can only withdraw once', async () => {
+            await expectRevert(
+                this.MVS.withdraw(idCounter, 48, byAlice),
+                "only one withdraw per epoche"
+            )
+        })
+    })
     describe('views', async () => {
-
+        it('getUpdatedRewardsDue()', async () =>{
+            assert.equal(await this.MVS.isWithdrawPhase(), true);
+            await this.MVS.deposit(tokenId(), 1, byBob);
+            assert.equal(await this.MVS.getUpdatedRewardsDue(idCounter), "0");
+            await time.increase(10);
+            assert.equal(await this.MVS.getUpdatedRewardsDue(idCounter), "0");
+            await this.MVS.nextEpoche(62899200, 10000, byOwner);
+            await time.increase(1001);
+            assert.equal(await this.MVS.isWithdrawPhase(), false)
+            await this.MVS.deposit(tokenId(), 1, byBob);
+            assert.equal(await this.MVS.getUpdatedRewardsDue(idCounter), "0");
+            await time.increase(10);
+            assert.equal(await this.MVS.getUpdatedRewardsDue(idCounter), "20");
+        })
     })
 })
