@@ -127,6 +127,7 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
 
         _updateStakingRewards(tokenId);
         uint256 rewardsDue = _nftStats[tokenId].rewardsDue;
+        // costs more gas to set to 1 instead of 0, but this is overpowered by the next time this is set to a non 0 value from 1 (or 0);
         // careful, this only works as long as 1 unit of the token is practically worthless:
         // setting to 1 to save gas, value donated is practically 0 and cannot be exploited because of gas costs
         _nftStats[tokenId].rewardsDue = 1;
@@ -232,6 +233,7 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
 
     function _increasePositionFor(address _sender, uint256 tokenId, uint256 amount) internal {
         require(amount + _totalAmountStaked <= _maximumAmountStaked, "maximum amount is reached");
+        require(_sender == ownerOf(tokenId), "can only deposit for owned nft");
         IERC20(currency).safeTransferFrom(_sender, address(this), amount);
         _updateStakingRewards(tokenId);
 
