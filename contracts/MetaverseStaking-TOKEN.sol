@@ -166,7 +166,7 @@ contract MetaverseStaking is ERC721Upgradeable, OwnableUpgradeable, IMetaverseSt
 
     function rescueToken(address token) external onlyOwner {
         require(token != currency, "cannot rescue invested funds");
-        IERC20(token).transfer(msg.sender, IERC20(token).balanceOf(address(this)));
+        IERC20(token).safeTransfer(msg.sender, IERC20(token).balanceOf(address(this)));
     }
 
     // Bot related //
