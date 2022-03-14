@@ -41,7 +41,7 @@ contract MVSProxy is Proxy, IProxy {
         s.implementation = newImplementation;
         if(data.length != 0) {
             (bool success, ) = newImplementation.delegatecall(data);
-            if(!success) revert("low level call failed");
+            require(success, "low level call failed");
         }
     }
 
