@@ -14,8 +14,9 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "./Interfaces/IMetaverseStakingFrontend.sol";
 
 
-contract MetaverseStakingToken is ERC721Upgradeable, OwnableUpgradeable, IMetaverseStaking {
+contract MetaverseStakingNative is ERC721Upgradeable, OwnableUpgradeable {
     using SafeERC20 for IERC20;
+    using Address for address payable;
 
     uint256 constant private BILLION_PRECISION_POINTS = 1e9;
     uint256 constant private SECONDS_PER_YEAR = 52 weeks;
@@ -23,7 +24,6 @@ contract MetaverseStakingToken is ERC721Upgradeable, OwnableUpgradeable, IMetave
     uint256 private _withdrawPeriod;
 
     address public MGH_TOKEN;
-    address public currency;
     uint256 private _totalAmountStaked;
     uint256 private _maximumAmountStaked;
     uint256 private _withdrawPercentage;
@@ -37,6 +37,13 @@ contract MetaverseStakingToken is ERC721Upgradeable, OwnableUpgradeable, IMetave
         uint256 start;
         uint256 end;
         uint256 lastEnd;
+    }
+    
+    struct NftStats {
+        uint104 amount;
+        uint48 lastUpdateTime;
+        uint104 rewardsDue;
+        mapping(uint256 => bool) hasWithdrawnInEpoche;
     }
 
     struct initNftMetadata {
@@ -55,7 +62,6 @@ contract MetaverseStakingToken is ERC721Upgradeable, OwnableUpgradeable, IMetave
 
     function initialize(
         address mghToken,
-        address _currency,
         uint256 _firstEpocheStart,
         uint256 _firstEpocheLength,
         uint256 __withdrawPeriod,
@@ -66,7 +72,6 @@ contract MetaverseStakingToken is ERC721Upgradeable, OwnableUpgradeable, IMetave
         __Ownable_init();
         __ERC721_init(nftMetaData.name, nftMetaData.symbol, nftMetaData.baseUri);
         MGH_TOKEN = mghToken;
-        currency = _currency;
         if(_firstEpocheStart == 0) _firstEpocheStart = block.timestamp + __withdrawPeriod;
         currentEpoche = Epoche(_firstEpocheStart, _firstEpocheStart + _firstEpocheLength, block.timestamp);
         _withdrawPeriod = __withdrawPeriod;
@@ -74,29 +79,18 @@ contract MetaverseStakingToken is ERC721Upgradeable, OwnableUpgradeable, IMetave
         _maximumAmountStaked = __maximumAmountStaked * 1 ether;
         _withdrawPercentage = BILLION_PRECISION_POINTS;
     }
-    
-    // we have a guarantee from sand token contract, that the first param equals the former msg.sender (the approver)
-    function approveAndCallHandlerDeposit(address _sender, uint256 tokenId, uint256 amount) external override {
-        require(msg.sender == currency, "callable by token contract");
-        _depositFor(_sender, tokenId, amount);
+
+    function deposit(uint256 tokenId) external payable {
+        require(msg.value != 0, "amount != 0");
+        _depositFor(msg.sender, tokenId, msg.value);
     }
 
-    function approveAndCallHandlerIncrease(address _sender, uint256 tokenId, uint256 amount) external override {
-        require(msg.sender == currency, "callable by token contract");
-        _increasePositionFor(_sender, tokenId, amount);
+    function increasePosition(uint256 tokenId) external payable {
+        require(msg.value != 0, "amount != 0");
+        _increasePositionFor(msg.sender, tokenId, msg.value);
     }
 
-    function deposit(uint256 tokenId, uint256 amount) external override {
-        require(amount != 0, "amount != 0");
-        _depositFor(msg.sender, tokenId, amount);
-    }
-
-    function increasePosition(uint256 tokenId, uint256 amount) external override {
-        require(amount != 0, "amount != 0");
-        _increasePositionFor(msg.sender, tokenId, amount);
-    }
-
-    function withdraw(uint256 tokenId, uint256 amount) external override {
+    function withdraw(uint256 tokenId, uint256 amount) external {
         require(amount != 0, "amount != 0");
         require(isWithdrawPhase(), "not withdraw time");
         require(msg.sender == ownerOf(tokenId), "not your nft");
@@ -116,13 +110,13 @@ contract MetaverseStakingToken is ERC721Upgradeable, OwnableUpgradeable, IMetave
         stats.amount -= uint104(amount);
         _totalAmountStaked -= amount;
 
-        IERC20(currency).safeTransfer(msg.sender, amount);
+        payable(msg.sender).sendValue(amount);
 
 
         emit Withdrawn(tokenId, msg.sender, amount);
     }
 
-    function getRewards(uint256 tokenId) external override {
+    function getRewards(uint256 tokenId) external {
         address tokenOwner = ownerOf(tokenId);
 
         _updateStakingRewards(tokenId);
@@ -165,7 +159,6 @@ contract MetaverseStakingToken is ERC721Upgradeable, OwnableUpgradeable, IMetave
     }
 
     function rescueToken(address token) external onlyOwner {
-        require(token != currency, "cannot rescue invested funds");
         IERC20(token).safeTransfer(msg.sender, IERC20(token).balanceOf(address(this)));
     }
 
@@ -185,19 +178,18 @@ contract MetaverseStakingToken is ERC721Upgradeable, OwnableUpgradeable, IMetave
         require(_isRegistered[recipient], "recipient must be a registered bot");
         require(!isWithdrawPhase(), "can only use in locking phase");
         _totalBotBalance -= int256(amount);
-        IERC20(currency).transfer(recipient, amount);
+        payable(recipient).sendValue(amount);
         _updateWithdrawPercentage();
         emit WithdrawToBot(recipient, amount);
     }
 
-    function depositFromBot(address bot, uint256 amount) external {
+    function depositFromBot(address bot) external payable {
         require(_isRegistered[bot], "can only deposit from bot");
         require(msg.sender == bot || msg.sender == owner());
         require(!isWithdrawPhase());
-        IERC20(currency).transferFrom(bot, address(this), amount);
-        _totalBotBalance += int256(amount);
+        _totalBotBalance += int256(msg.value);
         _updateWithdrawPercentage();
-        emit DepositFromBot(bot, amount);
+        emit DepositFromBot(bot, msg.value);
     }
 
     function registerAsBot() external {
@@ -218,7 +210,6 @@ contract MetaverseStakingToken is ERC721Upgradeable, OwnableUpgradeable, IMetave
 
     function _depositFor(address _sender, uint256 tokenId, uint256 amount) internal {
         require(amount + _totalAmountStaked <= _maximumAmountStaked, "maximum amount is reached");
-        IERC20(currency).safeTransferFrom(_sender, address(this), amount);
 
         _mint(_sender, tokenId);
 
@@ -234,7 +225,7 @@ contract MetaverseStakingToken is ERC721Upgradeable, OwnableUpgradeable, IMetave
     function _increasePositionFor(address _sender, uint256 tokenId, uint256 amount) internal {
         require(amount + _totalAmountStaked <= _maximumAmountStaked, "maximum amount is reached");
         require(_sender == ownerOf(tokenId), "can only deposit for owned nft");
-        IERC20(currency).safeTransferFrom(_sender, address(this), amount);
+
         _updateStakingRewards(tokenId);
 
         _nftStats[tokenId].amount += uint104(amount);
@@ -262,7 +253,7 @@ contract MetaverseStakingToken is ERC721Upgradeable, OwnableUpgradeable, IMetave
             ? _lastTimeApplicable - _lastTimeUpdated
             : 0;
         if(timePassed > 0) {
-            stats.rewardsDue += uint104(timePassed * stats.amount * _rewardPerTokenAndYear / SECONDS_PER_YEAR);
+            stats.rewardsDue += uint48(timePassed * stats.amount * _rewardPerTokenAndYear / SECONDS_PER_YEAR);
         }
         //alternatively do the next line in the if statement.
         //would lead to exploit, where people earn while nothing is staked during withdraw phase
@@ -281,20 +272,20 @@ contract MetaverseStakingToken is ERC721Upgradeable, OwnableUpgradeable, IMetave
 
     ////////////////    Views    ////////////////
 
-    function getTotalAmountStaked() external view override returns(uint256) {
+    function getTotalAmountStaked() external view returns(uint256) {
         return _totalAmountStaked;
     }
 
-    function getMaximumAmountStaked() external view override returns(uint256) {
+    function getMaximumAmountStaked() external view returns(uint256) {
         return _maximumAmountStaked;
     }
 
-    function getRewardRate() external view override returns(uint256) {
+    function getRewardRate() external view returns(uint256) {
         return _rewardPerTokenAndYear;
     }
 
     // method for getting a constant but unique number for one withdrawPhase
-    function getEpocheNumber() public view override returns(uint256) {
+    function getEpocheNumber() public view returns(uint256) {
         uint256 epocheCounter = _epocheCounter;
         if(block.timestamp > currentEpoche.start) {
             epocheCounter += 1;
@@ -302,7 +293,7 @@ contract MetaverseStakingToken is ERC721Upgradeable, OwnableUpgradeable, IMetave
         return epocheCounter;
     }
 
-    function isWithdrawPhase() public view override returns(bool) {
+    function isWithdrawPhase() public view returns(bool) {
         return block.timestamp < currentEpoche.start ||
                block.timestamp > currentEpoche.end;
     }
@@ -311,7 +302,7 @@ contract MetaverseStakingToken is ERC721Upgradeable, OwnableUpgradeable, IMetave
         return _withdrawPercentage;
     }
 
-    function viewNftStats(uint256 tokenId) external view override 
+    function viewNftStats(uint256 tokenId) external view 
         returns(
             uint104 amountStaked,
             uint48 lastTimeRewardsUpdate,
@@ -327,15 +318,15 @@ contract MetaverseStakingToken is ERC721Upgradeable, OwnableUpgradeable, IMetave
         hasWithdrawnInEpoche   = stats.hasWithdrawnInEpoche[getEpocheNumber()];
     }
 
-    function getAmount(uint256 tokenId) external view override returns(uint104) {
+    function getAmount(uint256 tokenId) external view returns(uint104) {
         return _nftStats[tokenId].amount;
     }
 
-    function getRewardsDue(uint256 tokenId) external view override returns(uint104) {
+    function getRewardsDue(uint256 tokenId) external view returns(uint104) {
         return _nftStats[tokenId].rewardsDue;
     }
 
-    function getUpdatedRewardsDue(uint256 tokenId) external view override returns(uint256) {
+    function getUpdatedRewardsDue(uint256 tokenId) external view returns(uint256) {
         NftStats storage stats = _nftStats[tokenId];
         uint104 amount = stats.amount;
         uint48 lastUpdateTime = stats.lastUpdateTime;
@@ -349,7 +340,7 @@ contract MetaverseStakingToken is ERC721Upgradeable, OwnableUpgradeable, IMetave
         return rewardsDue;
     }
 
-    function getWithdrawableAmount(uint256 tokenId) external view override returns(uint256) {
+    function getWithdrawableAmount(uint256 tokenId) external view returns(uint256) {
         if(!_nftStats[tokenId].hasWithdrawnInEpoche[getEpocheNumber()]) {
            return _withdrawPercentage * _nftStats[tokenId].amount / BILLION_PRECISION_POINTS; 
         }
@@ -367,4 +358,17 @@ contract MetaverseStakingToken is ERC721Upgradeable, OwnableUpgradeable, IMetave
     function isRegisteredBot(address bot) external view returns(bool) {
         return _isRegistered[bot];
     }
+
+    //// EVENTS //// 
+    event Deposit(uint256 indexed tokenId, address indexed staker, uint256 amount);
+    event PositionIncreased(uint256 indexed tokenId, address indexed staker, uint256 amount);
+    event Withdrawn(uint256 indexed tokenId, address indexed recipient, uint256 amount);
+    event RewardPaid(uint256 indexed tokenId, address indexed recipient, uint256 amount);
+
+    event NewEpoche(uint256 start, uint256 end, uint256 pendingRewardRate);
+
+    event BotRegistered(address indexed account);
+
+    event WithdrawToBot(address indexed recipient, uint256 amount);
+    event DepositFromBot(address indexed bot, uint256 amount);
 }
