@@ -253,7 +253,7 @@ contract MetaverseStakingNative is ERC721Upgradeable, OwnableUpgradeable {
             ? _lastTimeApplicable - _lastTimeUpdated
             : 0;
         if(timePassed > 0) {
-            stats.rewardsDue += uint48(timePassed * stats.amount * _rewardPerTokenAndYear / SECONDS_PER_YEAR);
+            stats.rewardsDue += uint104(timePassed * stats.amount * _rewardPerTokenAndYear / SECONDS_PER_YEAR);
         }
         //alternatively do the next line in the if statement.
         //would lead to exploit, where people earn while nothing is staked during withdraw phase
