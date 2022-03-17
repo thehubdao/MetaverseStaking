@@ -1,4 +1,4 @@
-const MetaverseStaking = artifacts.require('MetaverseStaking');
+const MetaverseStaking = artifacts.require('MetaverseStakingToken');
 const ERC20RewardMock  = artifacts.require('ERC20RewardMock');
 const ERC20SandMock    = artifacts.require('ERC20SandMock');
 const Proxy            = artifacts.require('MVSProxy');
