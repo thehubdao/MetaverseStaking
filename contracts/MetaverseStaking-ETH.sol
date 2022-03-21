@@ -9,9 +9,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./ERC721Upgradeable.sol";
 
 /* import "@openzeppelin/contracts-upgradeable/token/ERC721/ERC721Upgradeable.sol"; */
-import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "./Interfaces/IMetaverseStakingFrontend.sol";
 
 
 contract MetaverseStakingNative is ERC721Upgradeable, OwnableUpgradeable {
@@ -20,10 +18,12 @@ contract MetaverseStakingNative is ERC721Upgradeable, OwnableUpgradeable {
 
     uint256 constant private BILLION_PRECISION_POINTS = 1e9;
     uint256 constant private SECONDS_PER_YEAR = 52 weeks;
+    address public constant currency = 0x0000000000000000000000000000000000000000;
 
     uint256 private _withdrawPeriod;
 
     address public MGH_TOKEN;
+
     uint256 private _totalAmountStaked;
     uint256 private _maximumAmountStaked;
     uint256 private _withdrawPercentage;
@@ -38,7 +38,7 @@ contract MetaverseStakingNative is ERC721Upgradeable, OwnableUpgradeable {
         uint256 end;
         uint256 lastEnd;
     }
-    
+
     struct NftStats {
         uint104 amount;
         uint48 lastUpdateTime;
