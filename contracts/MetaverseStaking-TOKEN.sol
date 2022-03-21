@@ -7,9 +7,6 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 // inheritance
 import "./ERC721Upgradeable.sol";
-
-/* import "@openzeppelin/contracts-upgradeable/token/ERC721/ERC721Upgradeable.sol"; */
-import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "./Interfaces/IMetaverseStakingFrontend.sol";
 
@@ -354,6 +351,10 @@ contract MetaverseStakingToken is ERC721Upgradeable, OwnableUpgradeable, IMetave
            return _withdrawPercentage * _nftStats[tokenId].amount / BILLION_PRECISION_POINTS; 
         }
         revert("tokenId has already withdrawn this epoche");
+    }
+
+    function getWithdrawPeriodLength() public view returns(uint256) {
+        return _withdrawPeriod;
     }
 
     function getBotBalance() external view returns(int256) {
